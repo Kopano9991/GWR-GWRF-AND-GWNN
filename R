@@ -1,1 +1,2088 @@
+#############################EXPLONATORY DATA ANALYSIS##########################
+################################################################################
+###############################################################################
+Output <- st_read("C:/Users/Public/Sahel","Complete")
+
+p1 = ggplot(Output, aes(y = fct_infreq(factor(COUNTRY)), fill = COUNTRY)) + 
+  geom_bar(stat = "count") + 
+  xlab("Count") +
+  ylab(NULL) +  # Remove the y-axis label
+  scale_fill_manual("Countries", values = brewer.pal(11, "Set3"))
+
+ggsave("country.jpg", plot = p1, width = 12, height = 6)
+
+p2 = Output %>%
+  pivot_longer(cols = c(Soil, Rainfall, DEM, Temp), 
+               names_to = "Variable", 
+               values_to = "Value") %>%
+  ggplot(mapping = aes(x = Value, y = NPP, colour = COUNTRY)) +
+  geom_point() +  # Plot points
+  geom_smooth(method = "lm") +  # Add linear trend line
+  facet_wrap(~Variable, scales = "free_x", ncol = 2) +  # Create subplots for each predictor, 2 columns
+  theme_minimal() +  # Use minimal theme for a cleaner look
+  labs(title = "Scatter Plots of NPP vs. Soil, Rainfall, DEM, and Temp by Country",
+       x = "Predictor Values",
+       y = "NPP",
+       colour = "Countries")
+ggsave("country.jpg", plot = p2, width = 12, height = 6)
+
+p3 = Output %>%
+  pivot_longer(cols = c(Soil, Rainfall, DEM, Temp), names_to = "Variable", values_to = "Value") %>% 
+  ggplot(aes(x = Value, y = NPP)) + 
+  # specify point characteristics
+  geom_point(col = "tomato", shape = 20, size = 2.7) +
+  xlab("Value") + ylab("NPP") +
+  # specify a trend line and a theme/style
+  geom_smooth(method = "lm", colour = "#DE2D26") +
+  facet_wrap(~Variable, scales = "free_x", ncol = 2) +  # Create facets for each predictor, 2 columns
+  theme_minimal() +
+  labs(title = "Scatter Plots of NPP vs. Soil, Rainfall, DEM, and Temp",
+       x = "Predictor Values",
+       y = "NPP")
+
+ggsave("country.jpg", plot = p3, width = 12, height = 6)
+
+p4 <- ggplot(Output, aes(x = COUNTRY, y = NPP, fill = COUNTRY)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Boxplot of NPP by Country",
+       x = "Countries",
+       y = "NPP",
+       fill = "Countries") +
+  scale_fill_manual(values = c("Chad" = "indianred", "Niger" = "lightblue", "Sudan" = "lightgreen")) +
+  theme(legend.position = "right")
+ggsave("country.jpg", plot = p4, width = 12, height = 6)
+
+################################OLS#############################################
+
+Output <- st_read("C:/Users/Public/Sahel","Complete")
+df = st_drop_geometry(Output)
+
+#Standardize only the predictor variables
+df[, 4:7] = scale(df[, 4:7])
+
+# runs a linear model
+model <- lm(NPP ~ DEM + Soil + Rainfall + Temp, data = df)
+
+summary(model)
+
+
+# this will plot 4 scatter plots from the linear model
+plot(model)
+
+
+# we can use the par function if we want to plot them in a 2x2 frame
+par(mfrow=c(2,2),mar = c(2, 2, 2, 2))
+plot(model)
+
+# determine studentised residuals and attach to OA.Census
+# Studentized residuals are essentially residuals divided by their estimated standard deviation
+# They help identify outliers in the dataset
+s.resids <- rstudent(model)
+
+# Histogram of standardized residuals
+hist_plot <- ggplot(df.resids, aes(s.resids)) +
+  geom_histogram(bins = 30, fill = "blue") +
+  labs(title = "Histogram of Standardized Residuals", 
+       x = "Standardized Residuals", y = "Count")
+
+# Mapping the residuals
+resids<-residuals(model)
+
+map.resids <- cbind(Output, resids)
+# we need to rename the column header from the resids file 
+#in this case its the 6th column of map.resids
+names(map.resids)[8] <- "resids"
+
+
+# maps the residuals using the quickmap function from tmap
+qtm(map.resids, fill = "resids")
+
+# Or tmap
+
+tm_shape(map.resids) + 
+  tm_polygons('resids',palette = "YlOrRd",
+              title = "OLS residuals") +
+  tm_layout(legend.position = c("left", "top"), legend.outside = T, frame = F) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+# OR
+
+map1 <- tm_shape(map.resids) + 
+  tm_fill("resids", n = 5, style = "quantile", palette = "YlOrRd", title = "Residuals Values")  + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "OLS Residuals",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+tmap_save(map1, filename = "comb_map.png", width = 12, height = 6)
+
+
+
+
+################################################################################
+###################################GWR##########################################
+
+Output.scaled <- st_read("C:/Users/Public/Sahel","Scaled_data")
+
+# There are 2 basic steps to any GW approach:
+
+#1.Determine the optimal kernel bandwidth
+#2.Fit the GW model.
+
+#The GWmodel package has tools for determining the optimal GWR bandwidth, 
+#but requires the data to be transformed to sp format from sf:
+
+# convert to sp
+Output.sp = as(Output.scaled, "Spatial")
+
+# determine the kernel bandwidth
+# AIC is preferred to CV because it reflects model parsimony and 
+# its use tends to avoid over-fitting GWR models
+bw <- bw.gwr(NPP ~ DEM + Soil + Rainfall + Temp,
+             approach = "AIC",
+             kernel = "gaussian",
+             adaptive = T,
+             data=Output.sp) 
+
+# Now create the GWR model with adaptive bandwidth stored in bw, 
+# and have a look at the outputs:
+
+# fit the GWR model
+m.gwr <- gwr.basic(NPP ~ DEM + Soil + Rainfall + Temp, 
+                   data = Output.sp,
+                   bw = bw, 
+                   kernel = "gaussian",   
+                   adaptive = TRUE, 
+                   F123.test = TRUE) 
+
+
+
+#Evaluating the results
+
+# To access the data table in the SDF slot @data is added to this.
+
+tab.gwr <- rbind(apply(m.gwr$SDF@data[, 1:5], 2, summary), coef(model))
+rownames(tab.gwr)[7] <- "Global"
+tab.gwr <- round(tab.gwr, 4)
+
+# And you can inspect this table - note that the t() function transposes the table:
+t(tab.gwr)
+
+# # GWR outputs
+names(m.gwr)
+results <-as.data.frame(m.gwr$SDF)
+summary(results)
+
+names(results)
+
+gwr.map <- cbind(Output.scaled, as.matrix(results))
+names(gwr.map)
+
+p = tm_shape(gwr.map) + 
+  tm_fill("Local_R2", n = 5, style = "quantile", title = "Local_R2 Values")  + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = F,
+            main.title = "GWR Local R-squared",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom")) 
+
+tmap_save(p, filename = "comb_map.png", width = 12, height = 6)
+
+
+# create tmap objects
+map1 <- tm_shape(gwr.map) + 
+  tm_fill("DEM.1", n = 5, style = "quantile", title = "Coefficient Values")  + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(a) GWR:Elevation Coefficients",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map2 <- tm_shape(gwr.map) + 
+  tm_fill("Rainfall.1", n = 5, style = "quantile", title = "Coefficient Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(b) GWR:Rainfall Coefficients",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+            
+
+map3 <- tm_shape(gwr.map) + 
+  tm_fill("Soil.1", n = 5, style = "quantile", title = "Coefficient Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(c) GWR:Soil Moisture Coefficients",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+
+map4 <- tm_shape(gwr.map) + 
+  tm_fill("Temp.1", n = 5, style = "quantile", title = "Coefficient Values") + 
+  tm_borders(col = "black", lwd = 0.2) + 
+  tm_layout(frame = FALSE, 
+            main.title = " (d) GWR:Temperature Coefficients",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+
+library(grid)
+library(gridExtra)
+# creates a clear grid
+grid.newpage()
+# assigns the cell size of the grid, in this case 2 by 2
+pushViewport(viewport(layout=grid.layout(2,2)))
+
+# prints a map object into a defined cell   
+print(map1, vp=viewport(layout.pos.col = 1, layout.pos.row =1))
+print(map2, vp=viewport(layout.pos.col = 2, layout.pos.row =1))
+print(map3, vp=viewport(layout.pos.col = 1, layout.pos.row =2))
+print(map4, vp=viewport(layout.pos.col = 2, layout.pos.row =2))
+
+combined_map <- tmap_arrange(map1, map2, map3, map4, ncol = 2)
+
+# Increase dimensions for visibility
+tmap_save(combined_map, filename = "comb_map.png", width = 12, height = 6)
+
+
+# Extract t-values
+tval = m.gwr$SDF$DEM_TV
+
+
+# Identify significant t-values
+signif = tval < -1.96 | tval > 1.96
+
+# Categorize t-values
+results$t_DEM <- cut(tval,
+                       breaks=c(min(tval), -1.96, 1.96, max(tval)),
+                       labels=c("sig", "nonsig", "sig"))
+
+
+# Create the map
+map_sig = tm_shape(m.gwr$SDF) + 
+  tm_fill(col = "t_DEM3", title = "DEM: significant", legend.hist = TRUE, 
+          midpoint = NA, textNA = "", colorNA = "white") +  # add fill
+  tm_borders(col = "white", lwd = .1)  +  # add scale bar
+  tm_layout(frame = F, bg.color = "white", legend.outside = TRUE) # change background colour & place legend outside
+
+# Add significant t-values layer
+map_sig + tm_shape(m.gwr$SDF[signif,]) + 
+  tm_borders(col = "white", lwd = 0.5) # add borders
+
+
+
+################################################################################
+#######################################GWRF#####################################
+Output.scaled <- st_read("C:/Users/Public/Sahel","Scaled_data")
+df = st_drop_geometry(Output.scaled)
+GRFbandwidth <- grf.bw(NPP ~ DEM + Temp + Rainfall + Soil, dataset = df,
+                       kernel = "adaptive", coords = coords, bw.min = 20, bw.max = 50,
+                       step = 1,forests = FALSE, geo.weigthed = T)
+set.seed(1999)
+grf.model <- grf(NPP ~ DEM + Temp + Rainfall + Soil, 
+                 dframe = df, 
+                 bw = GRFbandwidth$best,   
+                 ntree = 1000,  
+                 mtry = 3,         
+                 kernel ="adaptive",  
+                 forests = TRUE,     
+                 coords = coords) 
+
+
+## Global Variable importance
+
+# Assuming grf.model$Global.Model$variable.importance is a named vector
+variable_importance <- grf.model$Global.Model$variable.importance
+
+# Convert to a data frame for ggplot2
+importance_df <- data.frame(
+  Variable = names(variable_importance),
+  Importance = variable_importance
+)
+
+# Create the horizontal bar plot
+ggplot(importance_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +  # Flip coordinates to make it horizontal
+  labs(title = "Global Variable Importance",
+       x = "Variable",
+       y = "Importance") +
+  theme_minimal()
+
+## Mapping local feature importance
+
+results <-as.data.frame(grf.model$Local.Variable.Importance)
+grf.map <- cbind(Output.scaled, as.matrix(results))
+
+tm_shape(grf.map) +
+  tm_polygons(c("DEM.1", "Temp.1", "Rainfall.1", "Soil.1"),
+              title = "Local Feature Importance",
+              palette = "-RdYlBu", 
+              n = 4) + 
+  tm_facets(free.scales = FALSE, nrow = 2, ncol = 2) + 
+  tm_layout(panel.labels = c("DEM", "Temperature", "Rainfall", "Soil"),
+            title = "Local Feature Importance by Variable",
+            legend.position = c("right", "bottom"))
+
+# create tmap objects
+map1 <- tm_shape(grf.map) + 
+  tm_fill("DEM.1", n = 5, style = "quantile", title = "IncMSE Values:DEM")  + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(a) GWRF:Elevation Variable Importance",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+map2 <- tm_shape(grf.map) + 
+  tm_fill("Rainfall.1", n = 5, style = "quantile", title = "IncMSE Values:Rainfall") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(b) GWRF:Rainfall Variable Importance",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map3 <- tm_shape(grf.map) + 
+  tm_fill("Soil.1", n = 5, style = "quantile", title = "IncMSE Values:Soil Moisture") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(c) GWRF:Soil Moisture Variable Importance",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map4 <- tm_shape(grf.map) + 
+  tm_fill("Temp.1", n = 5, style = "quantile", title = "IncMSE Values:Temperature") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(d) GWRF:Temperature Variable Importance",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+combined_map <- tmap_arrange(map1,map2,map3,map4, nrow = 2)
+
+# Increase dimensions for visibility
+tmap_save(combined_map, filename = "comb_map.png", width = 12, height = 6)
+
+
+## Partial Dependency Plots
+
+library(pdp)
+
+# Assuming grf.model$Global.Model is a ranger object
+global_model <- grf.model$Global.Model
+
+# Create a partial dependency plot for the 'Temp' feature
+pdp_temp <- partial(global_model, pred.var = "Temp", train = df)
+
+
+# Partial dependence for DEM
+pdp_dem <- partial(global_model, pred.var = "DEM", train = df)
+
+
+# Partial dependence for Soil
+pdp_soil <- partial(global_model, pred.var = "Soil", train = df)
+
+# Partial dependence for Rainfall
+pdp_rainfall <- partial(global_model, pred.var = "Rainfall", train = df)
+
+library(ggplot2)
+
+# Plot PDP for DEM
+p1 <- ggplot(pdp_dem, aes(x = DEM, y = yhat)) +
+  geom_line() + 
+  labs(title = "(a)Partial Dependence on DEM", y = "Average Prediction", x = "DEM") +
+  theme_minimal()
+
+# Plot PDP for Temperature
+p2 <- ggplot(pdp_temp, aes(x = Temp, y = yhat)) +
+  geom_line() + 
+  labs(title = "(d)Partial Dependence on Temperature", y = "Average Prediction", x = "Temperature") +
+  theme_minimal()
+
+# Plot PDP for Soil
+p3 <- ggplot(pdp_soil, aes(x = Soil, y = yhat)) +
+  geom_line() + 
+  labs(title = "(c)Partial Dependence on Soil Moisture", y = "Average Prediction", x = "Soil Moisture") +
+  theme_minimal()
+
+# Plot PDP for Rainfall
+p4 <- ggplot(pdp_rainfall, aes(x = Rainfall, y = yhat)) +
+  geom_line() + 
+  labs(title = "(b)Partial Dependence on Rainfall", y = "Average Prediction", x = "Rainfall") +
+  theme_minimal()
+
+# Arrange all the plots in a 2x2 grid
+library(gridExtra)
+grid.arrange(p1, p4, p3, p2, nrow = 2)
+
+
+
+
+
+
+## The average local variable importance in the GW-RF model
+
+
+# Extract variable names and mean importance values
+variable_names <- names(grf.model$Local.Variable.Importance)
+mean_importance <- grf.model$LocalModelSummary$l.VariableImportance$Mean
+
+# Create a data frame for the variable importance values
+importance_data <- data.frame(
+  Variable = variable_names,
+  MeanImportance = mean_importance
+)
+
+# Plot the bar chart
+ggplot(importance_data, aes(x = reorder(Variable, MeanImportance), y = MeanImportance)) +
+  geom_bar(stat = "identity", fill = "steelblue", width = 0.7) +
+  coord_flip() +  # Flip the axes for horizontal bars
+  labs(x = "Variable",y = "Average Local Variable Importance") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 10),axis.title = element_text(size = 12))
+
+
+## Map the GWRF R2
+names(grf.model)
+results.1 <-as.data.frame(grf.model$LGofFit)
+summary(results.1)
+
+names(results.1)
+
+grf.map.1 <- cbind(Output.scaled, as.matrix(results.1))
+names(grf.map.1)
+
+# Define the breaks and labels for the local R2 ranges
+breaks <- c(-Inf, 0.2, 0.4, 0.6, 0.8, Inf)
+labels <- c("≤ 0.2", "(0.2, 0.4]", "(0.4, 0.6]", "(0.6, 0.8]", "> 0.8")
+
+# Create the map with the specified ranges and label the legend
+p <- tm_shape(grf.map.1) +
+  tm_polygons("LM_Rsq100", 
+              breaks = breaks, 
+              labels = labels, 
+              title = "Local_R2 Intervals") +
+  tm_layout(frame = FALSE, 
+            main.title = "(b) GWRF Local R-squared",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+# Increase dimensions for visibility
+tmap_save(p, filename = "comb_map.png", width = 12, height = 6)
+
+
+# calculate the % of counties in the specified local R2 ranges using the LM_Rsq100
+
+# Define the ranges for local R2
+results.1 <- results.1 %>%
+  mutate(R2_range = case_when(
+    LM_Rsq100 <= 0.2 ~ "≤ 0.2",
+    LM_Rsq100 > 0.2 & LM_Rsq100 <= 0.4 ~ "(0.2, 0.4]",
+    LM_Rsq100 > 0.4 & LM_Rsq100 <= 0.6 ~ "(0.4, 0.6]",
+    LM_Rsq100 > 0.6 & LM_Rsq100 <= 0.8 ~ "(0.6, 0.8]",
+    LM_Rsq100 > 0.8 ~ "> 0.8"
+  ))
+
+# Calculate the percentage of counties in each range
+percentages <- results.1 %>%
+  group_by(R2_range) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = (Count / sum(Count)) * 100)
+
+# Print the results
+average_local_R2
+percentages
+
+
+################################################################################
+################################################################################
+##############################GWNN##############################################
+################################################################################
+# Load required libraries
+# Assuming `gwann` package is installed and provides the `gwann` function
+library(gwann)
+library(dplyr)
+
+
+# Prepare data matrices
+x_train <- as.matrix(df[, c("DEM", "Temp", "Rainfall", "Soil")])  # Independent variables
+y_train <- as.numeric(df$NPP)  # Target variable (NDVI as NPP)
+w_train <- as.matrix(dist(coords))  # Distance matrix based on spatial coordinates
+
+# Step 1: Train GWANN Model and Calculate Baseline MSE
+# Running the GWANN model
+set.seed(123)  # For reproducibility
+model_gwann <- gwann(
+  x_train = x_train,
+  y_train = y_train,
+  w_train = w_train,
+  x_pred = x_train,  # Predict on the training set for now
+  w_pred = w_train,  # Distance matrix for predictions
+  norm = F,
+  nrHidden = 6,  # Number of hidden neurons
+  batchSize = 50,  # Batch size
+  optimizer = "adam",  # Optimizer
+  lr = 0.01,  # Learning rate
+  kernel = "bisquare",  # Kernel type
+  cv_patience = 999,
+  bandwidth = NA,  # Let the model determine the bandwidth
+  adaptive = TRUE,  # Use adaptive bandwidth
+  bwSearch = "goldenSection",  # Bandwidth search method
+  bwMin = min(w_train) / 4,  # Bandwidth lower bound
+  bwMax = max(w_train) / 4,  # Bandwidth upper bound
+  threads = 1, # Number of threads for computation
+)
+
+
+
+# Predictions  
+predicted_values <- diag(model_gwann$predictions)  
+
+# Evaluate model performance  
+print(paste("RMSE: ", sqrt(mean((predicted_values - y_train)^2))))  
+print(paste("Iterations: ", model_gwann$iterations))  
+print(paste("Bandwidth: ", model_gwann$bandwidth)) 
+print(paste("Seconds: ", model_gwann$seconds)) 
+print(paste("R2: ", cor(predicted_values, y_train)^2)) 
+
+
+
+#residuals
+residuals <- y_train - predicted_values
+
+#plot predictions
+s<-cbind(predicted_values, Output.scaled)
+
+tm_shape(s) + 
+  tm_fill("predicted_values", n = 5, style = "quantile", title = "GWNN_pred") + 
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("left", "top"), legend.outside = T)
+
+p = cbind(s, residuals)
+
+
+# Heatmap for weights
+
+library(ggplot2)
+library(reshape2)
+
+# Access the first list
+first_list <- model_gwann$weights[[1]]
+
+
+
+#Remove the NaN columns for visualization
+first_list_clean <- first_list[, !apply(is.na(first_list), 2, any)]
+
+# Convert the matrix to a data frame for ggplot2
+first_df <- melt(first_list_clean)
+colnames(first_df) <- c("Input", "Hidden", "Weight")
+
+
+# Plot the heatmap
+
+ggplot(first_df, aes(x = Hidden, y = Input, fill = Weight)) +  
+  geom_tile() +  
+  geom_text(aes(label = round(Weight, 3)), color = "black") +  
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0,
+                       limits = c(-0.5, 1)) +
+  labs(title = "Input to Hidden Layer Weights", x = "Hidden Neurons", y = "Input Features") +
+  scale_y_continuous(breaks = 1:5, labels = c("DEM", "Temperature", "Rainfall", "Soil", "Bias")) +
+  scale_x_continuous(breaks = 1:6, labels = paste("Hidden", 1:6))
+
+# Access the second list
+second_list <- model_gwann$weights[[2]]
+
+# Aggregate the weights by summing across all output neurons
+aggregated_weights <- rowSums(second_list)
+
+# Create a data frame for ggplot2
+aggregated_weights_df <- data.frame(Hidden = 1:7, Weight = aggregated_weights)
+
+# Plot the bar chart with custom x-axis labels  
+ggplot(aggregated_weights_df, aes(x = factor(Hidden), y = Weight, fill = Weight)) +  
+  geom_bar(stat = "identity") +  
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +  
+  labs(title = "Aggregated Hidden to Output Layer Weights", x = "Hidden Neurons", 
+       y = "Aggregated Weight") +  
+  scale_x_discrete(labels = c("Hidden 1", "Hidden 2", "Hidden 3", "Hidden 4", 
+                              "Hidden 5", "Hidden 6", "Bias")) # Updated labels
+
+
+
+## map visualization of hidden layers
+transposed_matrix <- t(second_list)  
+
+# Converting to a dataframe  
+df1 <- as.data.frame(transposed_matrix)  
+
+# Renaming the columns  
+colnames(df1) <- c("Hidden 1", "Hidden 2", "Hidden 3", "Hidden 4", "Hidden 5", "Hidden 6", "Bias")  
+
+Hidden_df <-cbind(Output.scaled, as.matrix(df1))
+
+
+# create tmap objects
+map1 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.1", n = 5, style = "quantile", title = "Weights Values") +
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(a) Hiddel 1 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+map2 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.2", n = 5, style = "quantile", title = "Weights Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(b) Hiddel 2 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map3 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.3", n = 5, style = "quantile", title = "Weights Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(c) Hiddel 3 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map4 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.4", n = 5, style = "quantile", title = "Weights Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(d) Hiddel 4 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map5 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.5", n = 5, style = "quantile", title = "Weights Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(e) Hiddel 5 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map6 <- tm_shape(Hidden_df) + 
+  tm_fill("Hidden.6", n = 5, style = "quantile", title = "Weights Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(f) Hiddel 6 to Output Neuron Connection Weights",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+combined_map <- tmap_arrange(map1,map2,map3,map4,map5,map6, ncol = 2)
+
+# Increase dimensions for visibility
+tmap_save(combined_map, filename = "comb_map.png", width = 12, height = 6)
+
+
+
+library(grid)
+library(gridExtra)
+# creates a clear grid
+grid.newpage()
+# assigns the cell size of the grid, in this case 2 by 4
+dev.new()
+pushViewport(viewport(layout=grid.layout(3,2)))
+
+# prints a map object into a defined cell   
+print(map1, vp=viewport(layout.pos.col = 1, layout.pos.row =1))
+print(map2, vp=viewport(layout.pos.col = 2, layout.pos.row =1))
+print(map3, vp=viewport(layout.pos.col = 1, layout.pos.row =2))
+print(map4, vp=viewport(layout.pos.col = 2, layout.pos.row =2))
+print(map5, vp=viewport(layout.pos.col = 1, layout.pos.row =3))
+print(map6, vp=viewport(layout.pos.col = 2, layout.pos.row =3))
+
+
+################################################################################
+################################################################################
+#######################Spatial Residuals Autocorrelation########################
+################################################################################
+
+# 1. GWR
+
+library(spdep)
+
+## SpatialPolygonsDataFrame
+SPDF_gwr = m.gwr$SDF
+
+# Calculate neighbours
+neighbours <- poly2nb(SPDF_gwr)
+neighbours
+
+# We can plot the links between neighbours to visualise their distribution across space.
+
+plot(SPDF_gwr, border = 'lightgrey')
+plot(neighbours, coordinates(SPDF_gwr), add=TRUE, col='red')
+
+
+# Convert the neighbour data to a listw object
+listw <- nb2listw(neighbours)
+listw
+
+# global spatial autocorrelation
+moran.test(SPDF_gwr$residual, listw)
+
+# Running a local spatial autocorrelation
+
+# creates a moran plot
+moran <- moran.plot(SPDF_gwr$residual, listw = nb2listw(neighbours, style = "W"))
+
+# creates a local moran output
+local_gwr <- localmoran(x = SPDF_gwr$residual, listw = nb2listw(neighbours, style = "W"))
+local_gwr
+summary(local_gwr)
+
+
+## 2.GWRF
+
+# Extract numeric data frame with residuals
+LGOfFit <- grf.model$LGofFit
+
+# #Combine geometry with extracted residuals
+SF_grf <- cbind(Output.Areas, as.matrix(LGOfFit))
+
+# Convert the sf format to sp format
+SPDF_grf <- as(SF_grf, "Spatial")
+
+# Calculate neighbours
+neighbours_grf <- poly2nb(SPDF_grf)
+neighbours_grf
+
+# Convert the neighbour data to a listw object
+listw_grf <- nb2listw(neighbours_grf)
+listw_grf
+
+# global spatial autocorrelation
+moran.test(SPDF_grf$LM_ResOOB, listw_grf)
+
+# creates a local moran output
+local_grf <- localmoran(x = SPDF_grf$LM_ResOOB, 
+                    listw = nb2listw(neighbours_grf, style = "W"))
+local
+summary(local_grf)
+
+
+## 3. GWNN
+
+# Oupload the gwann sf file results
+SF_gwann <- st_read("C:/Users/Public/Sahel","gwann")
+
+# Convert the sf format to sp format
+SPDF_gwann <- as(SF_gwann, "Spatial")
+
+# Calculate neighbours
+neighbours_gwann <- poly2nb(SPDF_gwann)
+neighbours_gwann
+
+# Convert the neighbour data to a listw object
+listw_gwann <- nb2listw(neighbours_gwann)
+listw_gwann
+
+# global spatial autocorrelation
+moran.test(SPDF_gwann$residls, listw_gwann)
+
+# creates a local moran output
+local_gwann <- localmoran(x = SPDF_gwann$residls, 
+                        listw = nb2listw(neighbours_gwann, style = "W"))
+local
+summary(local_gwann)
+
+#######
+
+# binds results to our polygon shapefile
+moran_gwr <- cbind(Output.Areas, local_gwr)
+moran_grf <- cbind(Output.Areas, local_grf)
+moran_gwann <- cbind(Output.Areas, local_gwann)
+
+# maps the results
+tm_shape(moran_gwr) + tm_fill(col = "Ii", style = "quantile", title = "local moran statistic") 
+tm_shape(moran_grf) + tm_fill(col = "Ii", style = "quantile", title = "local moran statistic")
+tm_shape(moran_gwann) + tm_fill(col = "Ii", style = "quantile", title = "local moran statistic")
+
+
+
+# Plot LISA clusters for GWR
+quadrant_gwr <- vector(mode="numeric",length=nrow(local_gwr))
+
+# centers the variable of interest around its mean
+m.npp <- df$NPP - mean(df$NPP)     
+
+# centers the local Moran's around the mean
+m.local_gwr <- local_gwr[,1] - mean(local_gwr[,1])    
+
+# significance threshold
+signif <- 0.1 
+
+# builds a data quadrant
+quadrant_gwr[m.npp >0 & m.local_gwr>0] <- 4  
+quadrant_gwr[m.npp <0 & m.local_gwr<0] <- 1      
+quadrant_gwr[m.npp <0 & m.local_gwr>0] <- 2
+quadrant_gwr[m.npp >0 & m.local_gwr<0] <- 3
+quadrant_gwr[local_gwr[,5]>signif] <- 0   
+
+# plot in r
+# Add quadrant_gwr as a new column in the SPDF_gwr data frame
+SPDF_gwr$quadrant_gwr <- factor(quadrant_gwr, 
+                                   levels = c(0, 1, 2, 3, 4),
+                                   labels = c("Insignificant", "Low-Low", 
+                                              "Low-High", "High-Low", "High-High"))
+
+# Define colors
+colors <- c("white", "blue", rgb(0, 0, 1, alpha = 0.4), rgb(1, 0, 0, alpha = 0.4), "red")
+
+# Plot using tmap
+tm_shape(SPDF_gwr) +
+  tm_polygons("quadrant_gwr", 
+              palette = colors, 
+              title = "LISA Clusters") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+           legend.position = c("right", "top"), legend.outside = T)
+
+
+# Plot LISA clusters for GWRF
+quadrant_grf <- vector(mode="numeric",length=nrow(local_grf))
+
+# centers the variable of interest around its mean
+m.npp <- df$NPP - mean(df$NPP)     
+
+# centers the local Moran's around the mean
+m.local_grf <- local_grf[,1] - mean(local_grf[,1])    
+
+# significance threshold
+signif <- 0.1 
+
+# builds a data quadrant
+quadrant_grf[m.npp >0 & m.local_grf>0] <- 4  
+quadrant_grf[m.npp <0 & m.local_grf<0] <- 1      
+quadrant_grf[m.npp <0 & m.local_grf>0] <- 2
+quadrant_grf[m.npp >0 & m.local_grf<0] <- 3
+quadrant_grf[local_grf[,5]>signif] <- 0   
+
+# plot in r
+# Add quadrant_gwr as a new column in the SPDF_gwr data frame
+SPDF_grf$quadrant_grf <- factor(quadrant_grf, 
+                                levels = c(0, 1, 2, 3, 4),
+                                labels = c("Insignificant", "Low-Low", 
+                                           "Low-High", "High-Low", "High-High"))
+
+# Define colors
+colors <- c("white", "blue", rgb(0, 0, 1, alpha = 0.4), rgb(1, 0, 0, alpha = 0.4), "red")
+
+# Plot using tmap
+tm_shape(SPDF_grf) +
+  tm_polygons("quadrant_grf", 
+              palette = colors, 
+              title = "LISA Clusters") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("right", "bottom"), legend.outside = F)
+
+
+# Plot LISA clusters for GWANN
+quadrant_gwann <- vector(mode="numeric",length=nrow(local_gwann))
+
+# centers the variable of interest around its mean
+m.npp <- df$NPP - mean(df$NPP)     
+
+# centers the local Moran's around the mean
+m.local_gwann <- local_gwann[,1] - mean(local_gwann[,1])    
+
+# significance threshold
+signif <- 0.1 
+
+# builds a data quadrant
+quadrant_gwann[m.npp >0 & m.local_gwann>0] <- 4  
+quadrant_gwann[m.npp <0 & m.local_gwann<0] <- 1      
+quadrant_gwann[m.npp <0 & m.local_gwann>0] <- 2
+quadrant_gwann[m.npp >0 & m.local_gwann<0] <- 3
+quadrant_gwann[local_gwann[,5]>signif] <- 0   
+
+# plot in r
+# Add quadrant_gwr as a new column in the SPDF_gwr data frame
+SPDF_gwann$quadrant_gwann <- factor(quadrant_gwann, 
+                                levels = c(0, 1, 2, 3, 4),
+                                labels = c("Insignificant", "Low-Low", 
+                                           "Low-High", "High-Low", "High-High"))
+
+# Define colors
+colors <- c("white", "blue", rgb(0, 0, 1, alpha = 0.4), rgb(1, 0, 0, alpha = 0.4), "red")
+
+# Plot using tmap
+tm_shape(SPDF_gwann) +
+  tm_polygons("quadrant_gwann", 
+              palette = colors, 
+              title = "LISA Clusters") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("left", "top"), legend.outside = T)
+
+
+##########Mapping residuals and local statistics
+
+# create tmap objects
+map1 <- tm_shape(SPDF_gwr) + 
+  tm_fill("residual", n = 5, style = "quantile", title = "Local Residuals Values") +
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(a) GWR Local Residuals",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map2 <- tm_shape(SPDF_gwr) +
+  tm_polygons("quadrant_gwr", palette = colors, title = "LISA Clusters") +
+  tm_layout(frame = FALSE, 
+            main.title = "(b) GWR Local Moran's I",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map3 <- tm_shape(SPDF_grf) + 
+  tm_fill("LM_ResOOB", n = 5, style = "quantile", title = "Local Residuals Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(c) GWRF Local Residuals",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map4 <- tm_shape(SPDF_grf) +
+  tm_polygons("quadrant_grf", palette = colors, title = "LISA Clusters")+
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(d) GWRF Local Moran's I",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+map5 <- tm_shape(SPDF_gwann) + 
+  tm_fill("residls", n = 5, style = "quantile", title = "Local Residuals Values") + 
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(e) GWNN Local Residuals",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+map6 <- tm_shape(SPDF_gwann) +
+  tm_polygons("quadrant_gwann", palette = colors, title = "LISA Clusters") +
+  tm_borders(col = "black", lwd = 0.2) +
+  tm_layout(frame = FALSE, 
+            main.title = "(a) GWNN Local Moran's I",
+            main.title.position = "left",
+            main.title.color = "black",
+            main.title.size = 1,
+            legend.text.size = 0.5, 
+            legend.title.size = 0.6,
+            legend.position = c("left", "center"), 
+            legend.outside = TRUE,
+            legend.height = 10) +
+  tm_compass(position = c(0.005, 0.69))+
+  tm_scale_bar(position = c("left", "bottom"))
+
+
+combined_map <- tmap_arrange(map1, map2, map3, map4, map5, map6, ncol = 2)
+
+# Increase dimensions for visibility
+tmap_save(combined_map, filename = "comb_map.png", width = 12, height = 6)
+
+
+################################################################################
+################################################################################
+
+map1 <- tm_shape(SF_gwann) + 
+  tm_fill("prdctd_", n = 5, style = "quantile", title = "GWNN-Prediction") +
+  tm_layout(frame = FALSE, 
+            legend.text.size = 0.8, 
+            legend.title.size = 1,
+            legend.outside=T,
+            legend.position = c("right", "bottom"),
+            title.size = 1)
+
+map2 <- tm_shape(SPDF_gwr) + 
+  tm_fill("yhat", n = 5, style = "quantile", title = "GWR-Prediction") +
+  tm_layout(frame = FALSE, 
+            legend.text.size = 0.8, 
+            legend.title.size = 1,
+            legend.outside=T,
+            legend.position = c("right", "bottom"),
+            title.size = 1)
+
+map3 <- tm_shape(SF_grf) + 
+  tm_fill("LM_yfitOOB", n = 5, style = "quantile", title = "GWRF-Prediction") +
+  tm_layout(frame = FALSE, 
+            legend.text.size = 0.8, 
+            legend.title.size = 1,
+            legend.outside=T,
+            legend.position = c("right", "bottom"),
+            title.size = 1)
+
+map4 <- tm_shape(SPDF_gwr) +
+  tm_polygons("quadrant_gwr", 
+              palette = colors, 
+              title = "Local Moran's I (GWR)") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("right", "bottom"), legend.outside = T)
+
+map5 <- tm_shape(SPDF_grf) +
+  tm_polygons("quadrant_grf", 
+              palette = colors, 
+              title = "Local Moran's I (GWRF)") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("right", "bottom"), legend.outside = T)
+
+map6 <- tm_shape(SPDF_gwann) +
+  tm_polygons("quadrant_gwann", 
+              palette = colors, 
+              title = "Local Moran's I (GWNN)") +
+  tm_legend(title.size = 1) +
+  tm_layout(frame = FALSE, legend.text.size = 0.5, legend.title.size = 0.6,
+            legend.position = c("right", "bottom"), legend.outside = T)
+
+combined_map <- tmap_arrange(map2, map3, map1, map4, map5, map6, ncol = 3)
+
+# Increase dimensions for visibility
+tmap_save(combined_map, filename = "comb_map.png", width = 15, height = 10)
+
+
+################################################################################
+################################################################################
+##########################SENSITIVITY ANALYSIS##################################
+################################################################################
+## 1. GWANN
+
+# Load necessary libraries  
+library(viridis)  
+library(gwann)  
+library(ggplot2) 
+
+Output.scaled <- st_read("C:/Users/Public/Sahel","Scaled_data")
+
+df = st_drop_geometry(Output.scaled)
+# Calculate the centroid of each polygon
+centroids <- st_centroid(Output.scaled)
+
+# Extract the coordinates
+coords <- st_coordinates(centroids)
+
+#Combine original data with coordinates
+df <- cbind(df, coords)
+
+# Prepare the data   
+x <- as.matrix(df[, c("DEM", "Rainfall", "Temp", "Soil")]) # Independent variables  
+y <- as.numeric(df[, "NPP"]) # Dependent variable  
+dm <- as.matrix(dist(coords))  # Distance matrix based on spatial coordinates 
+set.seed(123)
+s_test <- sample(nrow(x), 0.1 * nrow(x)) # Indices of test samples  
+
+# Fit the GWANN model 
+set.seed(123)
+r <- gwann(  
+  x_train = x[-s_test, ],      # Training data for predictors  
+  y_train = y[-s_test],        # Training data for response  
+  w_train = dm[-s_test, -s_test], # Distance weights for training data  
+  x_pred = x[s_test, ],         # Prediction data for predictors  
+  w_pred = dm[-s_test, s_test],# Distance weights for prediction data  
+  norm = F,
+  nrHidden = 6,                 # Number of hidden neurons  
+  batchSize = 50,               # Batch size  
+  optimizer = "adam",
+  kernel = "exponential",
+  lr = 0.01,                    # Learning rate  
+  cv_patience = 999,            # Patience for cross-validation  
+  bandwidth = NA,
+  adaptive = T,             # Use fixed bandwidth  
+  bwSearch = "goldenSection",   # Bandwidth search method  
+  bwMin = min(dm)/4,         # Minimum bandwidth  
+  bwMax = max(dm)/4,         # Maximum bandwidth  
+  threads = 1, # Number of threads  
+)  
+
+
+# Predictions  
+predicted_values <- diag(r$predictions)  
+
+# Evaluate model performance  
+print(paste("RMSE: ", sqrt(mean((predicted_values - y[s_test])^2))))  
+print(paste("Iterations: ", r$iterations))  
+print(paste("Bandwidth: ", r$bandwidth))  
+print(paste("R2: ", cor(predicted_values, y[s_test])^2))
+
+
+# 2.GWRF
+
+Output.scaled <- st_read("C:/Users/Public/Sahel","Scaled_data")
+df = st_drop_geometry(Output.scaled)
+GRFbandwidth <- grf.bw(NPP ~ DEM + Temp + Rainfall + Soil, dataset = df,
+                         kernel = "adaptive", coords = coords, bw.min = 20, bw.max = 50,
+                         step = 1,forests = FALSE, geo.weigthed = T)
+set.seed(1999)
+grf.model <- grf(NPP ~ DEM + Temp + Rainfall + Soil, 
+                 dframe = df, 
+                 bw = 24,   
+                 ntree = 1000,  
+                 mtry = 3,         
+                 kernel ="tricube",  
+                 forests = TRUE,     
+                 coords = coords) 
+
+
+
+df1  = data.frame(x = GRFbandwidth_f$tested.bandwidths$Bandwidth,
+                  y = GRFbandwidth_f$tested.bandwidths$Local,
+                  Kernel = "Fixed")
+
+df2  = data.frame(x = GRFbandwidth_f$tested.bandwidths$Bandwidth,
+                  y = GRFbandwidth$tested.bandwidths$Local,
+                  Kernel = "Adaptive")
+
+df3 = rbind(df1, df2)
+
+write.csv(df3,"GWFR_KERNEL.csv",row.names = F)
+
+
+# Create the plot
+p2 = ggplot(df3, aes(x = x, y = y, col = Kernel, shape = Kernel)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 2) +
+  labs(title = "Out of Bag Coefficient of Determination",
+       x = "Bandwidth",
+       y = "R-squared") +
+  theme_minimal() +
+  theme(panel.grid.major = element_line(color = "grey", linetype = "dotted"),
+        panel.grid.minor = element_line(color = "grey", linetype = "dotted"))
+
+ggsave("GWRF_kernel.jpg", plot = p2, width = 12, height = 6)
+
+# 3 GWR
+
+Output.scaled <- st_read("C:/Users/Public/Sahel","Scaled_data")
+
+#Fit the GW model
+# convert to sp
+Output.sp = as(Output.scaled, "Spatial")
+
+# determine the kernel bandwidth
+bw <- bw.gwr(NPP ~ DEM + Soil + Rainfall + Temp,
+             approach = "AIC",
+             kernel = "exponential",
+             adaptive = F,
+             data=Output.sp) 
+
+
+# fit the GWR model
+m.gwr <- gwr.basic(NPP ~ DEM + Soil + Rainfall + Temp, 
+                   data = Output.sp,
+                   bw = bw, 
+                   kernel = "boxcar",   
+                   adaptive = F, 
+                   F123.test = TRUE) 
+m.gwr
+
+
+AG = data.frame(x = c(20,21,21,22,22,23,22,24,21,20,26,28,39,48,71,100,154,235,371,587),
+                  y = c(-3479.35,-3467.884,-3467.884,-3458.873,-3458.873,-3447.528,
+                        -3458.873,-3439.779,-3467.884,-3479.35,-3418.51,-3400.501,-3326.084,
+                        -3282.139,-3211.459,-3148.045,-3077.813,-2997.457,-2936.922,-2887.245),
+                  Kernel = "Adaptive-Gaussian")
+
+
+AB = data.frame(x = c(52,53,53,54,54,55,55,56,55,57,54,52,60,59,39,48,71,100,154,235,371,587),
+                y = c(-3668.61,-3666.697,-3666.697,-3667.631,-3667.631,-3664.658,-3664.658,
+                      -3665.223,-3664.658,-3664.494,-3667.631,-3668.61,-3668.139,-3668.14,
+                      -3639.52,-3662.542,-3660.03,-3615.154,-3484.411,-3254.859,-3120.887,-3021.753),
+                Kernel = "Adaptive-Bisquare")
+
+AT = data.frame(x = c(57,57,58,58,59,59,60,60,52,53,53,54,54,55,55,56,56,57,57,58,57,59,57,61,66,60,
+                      59,39,48,71,100,154,235,371,587),
+                y = c(-3653.906,-3653.906,-3654.783,-3654.783,-3657.332,-3657.332,-3657.413,-3657.413,
+                      -3659.087,-3657.251,-3657.251,-3657.765,-3657.765,-3654.191,-3654.191,-3654.402,
+                      -3654.402,-3653.906,-3653.906,-3654.783,-3653.906,-3657.332,-3653.906,-3657.916,
+                      -3652.324,-3657.413,-3657.332,-3632.412,-3653.679,-3648.436,-3605.347,-3477.304,
+                      -3237.919,-3112.434,-3011.468),
+                Kernel = "Adaptive-Tricube")
+
+AE = data.frame(x = c(20,21,21,22,22,23,22,24,21,20,26,28,39,48,71,100,154,235,371,587),
+                y = c(-3376.508,-3368.965,-3368.965,-3362.185,-3362.185,-3353.538,-3362.185,
+                      -3349.062,-3368.965,-3376.508,-3334.506,-3322.564,-3271.54,-3241.992,-3191.872,
+                      -3147.771,-3090.583,-3019.432,-2958.46,-2915.421),
+                Kernel = "Adaptive-Exponential")
+
+ABOX = data.frame(x = c(28,33,26,28,39,48,71,100,154,235,371,587),
+                  y = c(-3572.505,-3566.883,-3564.096,-3572.505,-3550.088,-3514.766,
+                        -3416.778,-3328.129,-3178.959,-3037.259,-2981.572,-2932.187),
+                  Kernel = "Adaptive-Boxcar")
+
+
+FBOX = data.frame(x = c(2.592913,2.59288,2.592742,2.592827,2.59319,2.592604,2.592966,
+                        2.5945,2.592018,2.596033,2.589536,2.600049,2.583039,2.610562,
+                        2.566028,2.638086,2.521494,2.710143,2.404902,2.593552,2.898792,
+                        4.191813,2.099662,3.392682,5.484834,8.870007,14.34733,23.20983),
+                  y = c(-3335.8,-3335.8,-3335.724,-3335.799,-3335.716,-3335.334,-3335.784,
+                        -3335.414,-3335.067,-3335.613,-3335.198,-3333.82,-3334.306,-3331.808,
+                        -3334.861,-3322.223,-3304.903,-3267.147,-3332.839,-3335.645,-3240.613,
+                        -3153.887,-2878.393,-3201.874,-3097.485,-3013.608,-2956.85,-2889.067),
+                  Kernel = "Fixed-Boxcar")
+
+FG = data.frame(x = c(0.5879536,0.588039,0.5879007,0.5881245,0.5877624,0.5883483,0.5874003,
+                      0.5889342,0.5864524,0.5879862,0.5944836,0.5839706,0.6009811,0.590468,
+                      0.545934,0.5734575,0.6900491,0.6179916,0.3127507,0.5013999,0.8066408,
+                      1.300531,2.099662,3.392682,5.484834,8.870007,14.34733,23.20983),
+                y = c(-3983.574,-3983.573,-3983.574,-3983.573,-3983.574,-3983.572,-3983.573,
+                      -3983.57,-3983.568,-3983.574,-3983.449,-3983.529,-3983.095,-3983.554,
+                      -3977.699,-3982.943,-3960.261,-3981.169,-2074.955,-3953.797,-3897.677,
+                      -3585.795,-3323.641,-3142.373,-3038.51,-2983.173,-2918.035,-2852.088),
+                Kernel = "Fixed-Gaussian")
+
+
+FB = data.frame(x = c(3.577507,3.577593,3.577454,3.57754,3.577678,3.577902,3.578264,3.57885,
+                      3.579798,3.583813,3.577316,3.587829,3.570819,3.598342,3.553808,3.625866,
+                      3.509274,3.581332,3.697923,3.886572,4.191813,4.685703,6.777855,3.392682,
+                      5.484834,8.870007,14.34733,23.20983),
+                y = c(-3435.311,-3528.26,-2667.785,-3528.28,-3528.244,-3528.2,-3528.129,-3528.014,
+                      -3527.828,-3527.043,-3514.657,-3526.262,-3492.557,-3524.225,-3428.46,
+                      -3518.932,-3251.984,-3527.528,-3505.228,-3470.909,-3421.511,-3359.947,
+                      -3212.496,-1196.111,-3291.34,-3119.335,-3026.415,-2974.276),
+                Kernel = "Fixed-Bisquare")
+
+FT = data.frame(x = c(3.083479,3.083564,3.083511,3.083288,3.08365,3.083064,3.084012,3.082478,
+                      3.08496,3.080944,3.083426,3.093939,3.076929,3.104452,3.059918,3.131976,
+                      3.015384,3.087442,3.204033,3.697923,2.898792,4.191813,2.099662,3.392682,
+                      5.484834,8.870007,14.34733,23.20983),
+                y = c(-1674.428,-3483.271,-3538.134,-3521.561,-3533.516,-3528.577,-1993.776,
+                      -3516.116,-3531.704,-3531.887,-3537.324,-3349.069,-3200.192,-3494.01,
+                      -3366.56,-3489.098,-3464.046,-3534.244,-3515.056,-3490.611,-3502.647,
+                      -3404.515,-2409.515,-3505.434,-3268.655,-3103.682,-3016.709,-2967.91),
+                Kernel = "Fixed-Tricube")
+
+FE = data.frame(x = c(0.5107413,0.5107413,0.510965,0.5094312,0.5103792,0.5143948,0.5078974,
+                      0.511913,0.5289235,0.5184104,0.4738764,0.545934,0.4293424,0.6179916,
+                      0.3127507,0.5013999,0.8066408,1.300531,2.099662,3.392682,5.484834,
+                      8.870007,14.34733,23.20983),
+                y = c(-3892.186,-3892.185,-3892.186,-3892.179,-3892.185,-3892.143,-3892.155,
+                      -3892.182,-3891.103,-3891.992,-3886.797,-3888.294,-3861.842,-3862.438,
+                      -3602.285,-3891.861,-3751.755,-3510.561,-3299.345,-3149.751,-3058.624,
+                      -2993.167,-2935.705,-2888.534),
+                Kernel = "Fixed-Exponential")
+
+adaptive_kernel = rbind(AB,ABOX,AE,AG,AT)
+
+# Create the plot
+p1 = ggplot(adaptive_kernel, aes(x = x, y = y, col = Kernel, shape = Kernel)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 2) +
+  labs(title = "Akaike Information Criterion",
+       x = "Bandwidth",
+       y = "AICc") +
+  theme_minimal() +
+  theme(panel.grid.major = element_line(color = "grey", linetype = "dotted"),
+        panel.grid.minor = element_line(color = "grey", linetype = "dotted"))
+
+ggsave("adaptive.jpg", plot = p1, width = 12, height = 6)
+
+fixed_kernel = rbind(FB,FBOX,FE,FG,FT)
+
+# Create the plot
+p = ggplot(fixed_kernel, aes(x = x, y = y, col = Kernel, shape = Kernel)) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 2) +
+  labs(title = "Akaike Information Criterion",
+       x = "Bandwidth",
+       y = "AICc") +
+  theme_minimal() +
+  theme(panel.grid.major = element_line(color = "grey", linetype = "dotted"),
+        panel.grid.minor = element_line(color = "grey", linetype = "dotted"))
+
+ggsave("fixed.jpg", plot = p, width = 12, height = 6)
+
+
+
+
+################################################################################
+################################################################################
+##################SCALABILITY AND COMPUTATIONAL COST############################
+################################################################################
+################################################################################
+
+## This analysis involved using subsets of the dataset, 
+## representing 25%, 50%, and 75% of the original data, to train and assess the models.
+
+## To achive the percentage split, Stratified Sampling was utilised 
+## In order to ensure that the sampled data(subsets) look similar to the original data
+
+### 1. Stratified Sampling Code for 25% Subset
+
+## Firstly, in the dataset we have a character variable called COUNTRY
+## Convert "COUNTRY" to factor
+Output.scaled$COUNTRY <- as.factor(Output.scaled$COUNTRY)
+
+Output.scaled$COUNTRY%>%levels() # Chad, Niger, Sudan 3 levels
+                                # The split is going to revolve around this Variable
+
+
+## What is the proportion of "Chad", "Niger", and "Sudan" in the "COUNTRY" Variable
+Output.scaled %>%
+  group_by(COUNTRY) %>%
+  summarise(fred = n()) %>%
+  mutate(prep = fred/nrow(Output.scaled)) ## Remember there are 939 record in the dataset
+ 
+# COUNTRY     fred    prep
+# 1. Chad     427     0.455
+# 2. Niger    179     0.187
+# 3. Sudan    336     0.358
+
+
+## We conduct "Stratified Sampling" when we want to preserve the proportion of
+## "Chad", "Niger", and "Sudan" in the sampled data same as original data
+
+## In other words, we want 45.5% "Chad", 18.7% "Niger", and 35.8% "Sudan" of
+## the sampled data after splitting the original data and 
+## that sampled data must represent the original data
+
+
+### 25% Stratified Sampling
+
+## Package needed to do Stratified Sampling:rsample
+library(rsample)
+
+## Conduct Stratified Sampling using initial_split()
+## For 25 % split
+## Notice: prop = 0.25 --> assign 25% of the dataset to use for scalability analysis
+## Notice: strata = COUNTRY --> variable whose proportion of "Chad", "Niger", and "Sudan" we are interested in
+                                 
+stratify_25 <- initial_split(Output.scaled,
+                          prop = 0.25,
+                          strata = COUNTRY)
+
+stratify_25
+## <Training/Testing/Total>
+## <234/705/939>
+## This means among 939 observations, 234 (25% of the dataset) will be used to
+## assess scalabilty and computational cost in Local Models
+
+
+## Create the dataset of the samole 25% for the analysis using "training()"
+stratify_25_data <- training(stratify_25)
+
+stratify_25_data %>% nrow()  #234
+## We see 234 observations, 25% of the original data
+
+
+## Now lets check the proportion of "Chad", "Niger", and "Sudan" for
+## our new sampled data (stratify_25_data)
+## We want to see if the distribution is preseved in ou new 25% sampled data
+stratify_25_data %>%
+  group_by(COUNTRY) %>%
+  summarise(fred = n()) %>%
+  mutate(prep = fred/nrow(stratify_25_data))
+## We see 45.3% of Chad, 18.9% of Niger, and 35.9% of Sudan !! Proportion is preserved 
+
+
+#### SIMALAR PROCEDURE IS MAINTAINED OF OTHER 50% AND 75% SPLIT
+
+### 2. Stratified Sampling Code for 50% Subset
+
+stratify_50 <- initial_split(Output.scaled,
+                             prop = 0.50,
+                             strata = COUNTRY)
+
+stratify_50
+
+stratify_50_data <- training(stratify_50)
+
+stratify_50_data %>% nrow()
+
+stratify_50_data %>%
+  group_by(COUNTRY) %>%
+  summarise(fred = n()) %>%
+  mutate(prep = fred/nrow(stratify_50_data))
+
+### 3. Stratified Sampling Code for 75% Subset
+
+stratify_75 <- initial_split(Output.scaled,
+                             prop = 0.75,
+                             strata = COUNTRY)
+
+stratify_75
+
+stratify_75_data <- training(stratify_75)
+
+stratify_75_data %>% nrow()
+
+stratify_75_data %>%
+  group_by(COUNTRY) %>%
+  summarise(fred = n()) %>%
+  mutate(prep = fred/nrow(stratify_75_data))
+
+
+
+############################ SCALABILITY ASSESSMENT ############################
+
+
+##################################### 1.GWR ###################################
+###  (a) 25% with GWR
+library(GWmodel)
+
+set.seed(123)
+train_index_gwr.25 <- sample(1:nrow(stratify_25_data), size = 0.9 * nrow(stratify_25_data))  
+train_gwr.25 <- stratify_25_data[train_index_gwr.25, ]  
+test_gwr.25 <- stratify_25_data[-train_index_gwr.25, ] 
+
+pre_gwr.25 <- gwr.predict(NPP ~ DEM + Soil + Rainfall + Temp, 
+                       data = train_gwr.25 , 
+                       predictdata = test_gwr.25, 
+                       bw = 20 , 
+                       kernel="gaussian",
+                       adaptive=T)
+
+# Compute training duration
+training_time <- pre_gwr.25$timings$stop - pre_gwr.25$timings$start
+
+# Output training time
+cat("Training Time:", training_time, "seconds\n")  
+
+# Get predictions
+pred_gwr.25 <- pre_gwr.25$SDF$prediction
+  
+# Calculate metrics 
+mse <- mean((pred_gwr.25 - test_gwr.25$NPP)^2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwr.25 - test_gwr.25$NPP)) 
+r2 <- cor(pred_gwr.25, test_gwr.25$NPP)^2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")  
+cat("R2:", r2, "\n")
+
+
+###  (b) 50% with GWR
+library(GWmodel)
+
+set.seed(123)
+train_index_gwr.50 <- sample(1:nrow(stratify_50_data), size = 0.9 * nrow(stratify_50_data))  
+train_gwr.50 <- stratify_50_data[train_index_gwr.50, ]  
+test_gwr.50 <- stratify_50_data[-train_index_gwr.50, ] 
+
+pre_gwr.50 <- gwr.predict(NPP ~ DEM + Soil + Rainfall + Temp, 
+                          data = train_gwr.50 , 
+                          predictdata = test_gwr.50, 
+                          bw = 20 , 
+                          kernel="gaussian",
+                          adaptive=T)
+
+# Compute training duration
+training_time <- pre_gwr.50$timings$stop - pre_gwr.50$timings$start
+
+# Output training time
+cat("Training Time:", training_time, "seconds\n")  
+
+# Get predictions
+pred_gwr.50 <- pre_gwr.50$SDF$prediction
+
+# Calculate metrics 
+mse <- mean((pred_gwr.50 - test_gwr.50$NPP)^2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwr.50 - test_gwr.50$NPP)) 
+r2 <- cor(pred_gwr.50, test_gwr.50$NPP)^2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")  
+cat("R2:", r2, "\n")
+
+
+### (c) 75% with GWR
+library(GWmodel)
+
+set.seed(123)
+train_index_gwr.75 <- sample(1:nrow(stratify_75_data), size = 0.9 * nrow(stratify_75_data))  
+train_gwr.75 <- stratify_75_data[train_index_gwr.75, ]  
+test_gwr.75 <- stratify_75_data[-train_index_gwr.75, ] 
+
+pre_gwr.75 <- gwr.predict(NPP ~ DEM + Soil + Rainfall + Temp, 
+                          data = train_gwr.75 , 
+                          predictdata = test_gwr.75, 
+                          bw = 20 , 
+                          kernel="gaussian",
+                          adaptive=T)
+
+# Compute training duration
+training_time <- pre_gwr.75$timings$stop - pre_gwr.75$timings$start
+
+# Output training time
+cat("Training Time:", training_time, "seconds\n")  
+
+# Get predictions
+pred_gwr.75 <- pre_gwr.75$SDF$prediction
+
+# Calculate metrics 
+mse <- mean((pred_gwr.75 - test_gwr.75$NPP)^2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwr.75 - test_gwr.75$NPP)) 
+r2 <- cor(pred_gwr.75, test_gwr.75$NPP)^2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")  
+cat("R2:", r2, "\n")
+
+
+##################################### 2.GWRF ###################################
+
+### (a) 25% with GWRF
+
+library(SpatialML)
+
+df_25 = st_drop_geometry(stratify_25_data)
+
+# Calculate the centroid of each polygon
+centroids_25 <- st_centroid(stratify_25_data)
+
+# Extract the coordinates
+coords_25 <- st_coordinates(centroids_25)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_grf.25 <- sample(1:nrow(df_25), size = 0.9 * nrow(df_25))  
+train_grf.25 <- df_25[train_index_grf.25, ]  
+test_grf.25 <- df_25[-train_index_grf.25, ]  
+
+# Extract coordinates for test data
+test_coords.25 <- coords_25[-train_index_grf.25, ]
+test_grf.25 <- cbind(test_grf.25, test_coords.25)
+colnames(test_grf.25)[(ncol(test_grf.25)-1):ncol(test_grf.25)] <- c("X", "Y")
+
+# Train the GRF model on the training data
+set.seed(1999)
+grf_model.25 <- grf(NPP ~ DEM + Temp + Rainfall + Soil,  
+                 dframe = train_grf.25,  
+                 bw = 24,  
+                 ntree = 1000,  
+                 mtry = 3,  
+                 kernel = "adaptive",  
+                 forests = TRUE,  
+                 coords = coords_25[train_index_grf.25, ])
+
+# Make predictions on the test set
+pred_grf.25 <- predict.grf(grf_model.25, 
+                        new.data = test_grf.25, 
+                        x.var.name = "X", 
+                        y.var.name = "Y", 
+                        local.w = 1, 
+                        global.w = 0)
+
+# Calculate performance metrics
+mse <- mean((pred_grf.25 - test_grf.25$NPP) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_grf.25 - test_grf.25$NPP))
+r2 <- cor(pred_grf.25, test_grf.25$NPP) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
+### (b) 50% with GWRF
+
+library(SpatialML)
+
+df_50 = st_drop_geometry(stratify_50_data)
+
+# Calculate the centroid of each polygon
+centroids_50 <- st_centroid(stratify_50_data)
+
+# Extract the coordinates
+coords_50 <- st_coordinates(centroids_50)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_grf.50 <- sample(1:nrow(df_50), size = 0.9 * nrow(df_50))  
+train_grf.50 <- df_50[train_index_grf.50, ]  
+test_grf.50 <- df_50[-train_index_grf.50, ]  
+
+# Extract coordinates for test data
+test_coords.50 <- coords_50[-train_index_grf.50, ]
+test_grf.50 <- cbind(test_grf.50, test_coords.50)
+colnames(test_grf.50)[(ncol(test_grf.50)-1):ncol(test_grf.50)] <- c("X", "Y")
+
+# Train the GRF model on the training data
+set.seed(1999)
+grf_model.50 <- grf(NPP ~ DEM + Temp + Rainfall + Soil,  
+                    dframe = train_grf.50,  
+                    bw = 24,  
+                    ntree = 1000,  
+                    mtry = 3,  
+                    kernel = "adaptive",  
+                    forests = TRUE,  
+                    coords = coords_50[train_index_grf.50, ])
+
+# Make predictions on the test set
+pred_grf.50 <- predict.grf(grf_model.50, 
+                           new.data = test_grf.50, 
+                           x.var.name = "X", 
+                           y.var.name = "Y", 
+                           local.w = 1, 
+                           global.w = 0)
+
+# Calculate performance metrics
+mse <- mean((pred_grf.50 - test_grf.50$NPP) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_grf.50 - test_grf.50$NPP))
+r2 <- cor(pred_grf.50, test_grf.50$NPP) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
+### (c) 75% with GWRF
+
+library(SpatialML)
+
+df_75 = st_drop_geometry(stratify_75_data)
+
+# Calculate the centroid of each polygon
+centroids_75 <- st_centroid(stratify_75_data)
+
+# Extract the coordinates
+coords_75 <- st_coordinates(centroids_75)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_grf.75 <- sample(1:nrow(df_75), size = 0.9 * nrow(df_75))  
+train_grf.75 <- df_75[train_index_grf.75, ]  
+test_grf.75 <- df_75[-train_index_grf.75, ]  
+
+# Extract coordinates for test data
+test_coords.75 <- coords_75[-train_index_grf.75, ]
+test_grf.75 <- cbind(test_grf.75, test_coords.75)
+colnames(test_grf.75)[(ncol(test_grf.75)-1):ncol(test_grf.75)] <- c("X", "Y")
+
+# Train the GRF model on the training data
+set.seed(1999)
+grf_model.75 <- grf(NPP ~ DEM + Temp + Rainfall + Soil,  
+                    dframe = train_grf.75,  
+                    bw = 24,  
+                    ntree = 1000,  
+                    mtry = 3,  
+                    kernel = "adaptive",  
+                    forests = TRUE,  
+                    coords = coords_75[train_index_grf.75, ])
+
+# Make predictions on the test set
+pred_grf.75 <- predict.grf(grf_model.75, 
+                           new.data = test_grf.75, 
+                           x.var.name = "X", 
+                           y.var.name = "Y", 
+                           local.w = 1, 
+                           global.w = 0)
+
+# Calculate performance metrics
+mse <- mean((pred_grf.75 - test_grf.75$NPP) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_grf.75 - test_grf.75$NPP))
+r2 <- cor(pred_grf.75, test_grf.75$NPP) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
+##################################### 2.GWNN ###################################
+
+### (a) 25% with GWNN
+
+library(caret)
+
+
+# Prepare the data
+x_25 <- as.matrix(df_25[, c("DEM", "Rainfall", "Temp", "Soil")]) # Independent variables
+y_25 <- as.numeric(df_25[, "NPP"]) # Dependent variable
+dm_25 <- as.matrix(dist(coords_25)) # Distance matrix based on spatial coordinates
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_gwnn.25 <- sample(1:nrow(df_25), size = 0.9 * nrow(df_25))  
+x_train.25 <- x_25[train_index_gwnn.25, ]
+y_train.25 <- y_25[train_index_gwnn.25]
+x_test.25 <- x_25[-train_index_gwnn.25, ]
+y_test.25 <- y_25[-train_index_gwnn.25]
+w_train.25 <- dm_25[train_index_gwnn.25, train_index_gwnn.25]
+w_pred.25 <- dm_25[train_index_gwnn.25, -train_index_gwnn.25]
+
+# Fit the GWNN model
+set.seed(123)
+start_time <- Sys.time()
+gwnn_model.25 <- gwann(
+  x_train = x_train.25,           # Training data for predictors
+  y_train = y_train.25,           # Training data for response
+  w_train = w_train.25,           # Distance weights for training data
+  x_pred = x_test.25,             # Prediction data for predictors
+  w_pred = w_pred.25,             # Distance weights for prediction data
+  norm = FALSE,
+  nrHidden = 6,                # Number of hidden neurons
+  batchSize = 50,              # Batch size
+  optimizer = "adam",
+  kernel = "gaussian",
+  lr = 0.01,                    # Learning rate
+  cv_patience = 999,           # Patience for cross-validation
+  adaptive = TRUE,             # Use fixed bandwidth  
+  bandwidth = 4,
+  threads = 1                  # Number of threads
+)
+
+# Capture end time after training
+end_time <- Sys.time()
+
+# Compute the total training time
+training_time <- end_time - start_time
+cat("Training Time:", training_time, "seconds\n")
+# Predictions
+pred_gwnn.25 <- diag(gwnn_model.25$predictions)
+
+# Calculate performance metrics
+mse <- mean((pred_gwnn.25 - y_test.25) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwnn.25 - y_test.25))
+r2 <- cor(pred_gwnn.25, y_test.25) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
+### (b) 50% with GWNN
+
+library(caret)
+
+
+# Prepare the data
+x_50 <- as.matrix(df_50[, c("DEM", "Rainfall", "Temp", "Soil")]) # Independent variables
+y_50 <- as.numeric(df_50[, "NPP"]) # Dependent variable
+dm_50 <- as.matrix(dist(coords_50)) # Distance matrix based on spatial coordinates
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_gwnn.50 <- sample(1:nrow(df_50), size = 0.9 * nrow(df_50))  
+x_train.50 <- x_50[train_index_gwnn.50, ]
+y_train.50 <- y_50[train_index_gwnn.50]
+x_test.50 <- x_50[-train_index_gwnn.50, ]
+y_test.50 <- y_50[-train_index_gwnn.50]
+w_train.50 <- dm_50[train_index_gwnn.50, train_index_gwnn.50]
+w_pred.50 <- dm_50[train_index_gwnn.50, -train_index_gwnn.50]
+
+# Fit the GWNN model
+set.seed(123)
+start_time <- Sys.time()
+gwnn_model.50 <- gwann(
+  x_train = x_train.50,           # Training data for predictors
+  y_train = y_train.50,           # Training data for response
+  w_train = w_train.50,           # Distance weights for training data
+  x_pred = x_test.50,             # Prediction data for predictors
+  w_pred = w_pred.50,             # Distance weights for prediction data
+  norm = FALSE,
+  nrHidden = 6,                # Number of hidden neurons
+  batchSize = 50,              # Batch size
+  optimizer = "adam",
+  kernel = "gaussian",
+  lr = 0.01,                    # Learning rate
+  cv_patience = 999,           # Patience for cross-validation
+  adaptive = TRUE,             # Use fixed bandwidth  
+  bandwidth = 4,
+  threads = 1                  # Number of threads
+)
+
+# Capture end time after training
+end_time <- Sys.time()
+
+# Compute the total training time
+training_time <- end_time - start_time
+cat("Training Time:", training_time, "seconds\n")
+# Predictions
+pred_gwnn.50 <- diag(gwnn_model.50$predictions)
+
+# Calculate performance metrics
+mse <- mean((pred_gwnn.50 - y_test.50) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwnn.50 - y_test.50))
+r2 <- cor(pred_gwnn.50, y_test.50) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
+### (c) 75% with GWNN
+
+library(caret)
+
+
+# Prepare the data
+x_75 <- as.matrix(df_75[, c("DEM", "Rainfall", "Temp", "Soil")]) # Independent variables
+y_75 <- as.numeric(df_75[, "NPP"]) # Dependent variable
+dm_75 <- as.matrix(dist(coords_75)) # Distance matrix based on spatial coordinates
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into 90% training and 10% testing
+train_index_gwnn.75 <- sample(1:nrow(df_75), size = 0.9 * nrow(df_75))  
+x_train.75 <- x_75[train_index_gwnn.75, ]
+y_train.75 <- y_75[train_index_gwnn.75]
+x_test.75 <- x_75[-train_index_gwnn.75, ]
+y_test.75 <- y_75[-train_index_gwnn.75]
+w_train.75 <- dm_75[train_index_gwnn.75, train_index_gwnn.75]
+w_pred.75 <- dm_75[train_index_gwnn.75, -train_index_gwnn.75]
+
+# Fit the GWNN model
+set.seed(123)
+start_time <- Sys.time()
+gwnn_model.75 <- gwann(
+  x_train = x_train.75,           # Training data for predictors
+  y_train = y_train.75,           # Training data for response
+  w_train = w_train.75,           # Distance weights for training data
+  x_pred = x_test.75,             # Prediction data for predictors
+  w_pred = w_pred.75,             # Distance weights for prediction data
+  norm = FALSE,
+  nrHidden = 6,                # Number of hidden neurons
+  batchSize = 50,              # Batch size
+  optimizer = "adam",
+  kernel = "gaussian",
+  lr = 0.01,                    # Learning rate
+  cv_patience = 999,           # Patience for cross-validation
+  adaptive = TRUE,             # Use fixed bandwidth  
+  bandwidth = 4,
+  threads = 1                  # Number of threads
+)
+
+# Capture end time after training
+end_time <- Sys.time()
+
+# Compute the total training time
+training_time <- end_time - start_time
+cat("Training Time:", training_time, "seconds\n")
+# Predictions
+pred_gwnn.75 <- diag(gwnn_model.75$predictions)
+
+# Calculate performance metrics
+mse <- mean((pred_gwnn.75 - y_test.75) ^ 2)
+rmse <- sqrt(mse)
+mae <- mean(abs(pred_gwnn.75 - y_test.75))
+r2 <- cor(pred_gwnn.75, y_test.75) ^ 2
+
+# Output the metrics
+cat("MSE:", mse, "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE:", mae, "\n")
+cat("R²:", r2, "\n")
+
+
 
